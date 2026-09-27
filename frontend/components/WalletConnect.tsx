@@ -43,22 +43,26 @@ export default function WalletConnect({ onConnect }: WalletConnectProps = {}) {
   } = useWalletStore();
   const gate = walletGate({ freighterAvailable, connected, publicKey, network }, EXPECTED_WALLET_NETWORK);
 
-  const loadBalance = useCallback(async (key: string, netName?: string | null, netPass?: string | null) => {
+  const loadBalance = useCallback(async (key: string, netName?: string | null, netPass?: string | null): Promise<{ success: boolean; balance: string; isDegraded?: boolean }> => {
     try {
       const balances = await getAccountBalance(key);
       const xlmBalance = balances.find(b => b.assetCode === 'XLM');
       const balanceStr = xlmBalance ? parseFloat(xlmBalance.balance).toFixed(2) : '0.00';
       setWallet(key, balanceStr, netName, netPass);
+      return { success: true, balance: balanceStr };
     } catch (error: any) {
+      const isDegraded = !error?.response || ['ERR_NETWORK', 'ECONNABORTED', 'ETIMEDOUT'].includes(error?.code);
+
       if (error.message?.includes('Not Found') || error.response?.status === 404) {
         setWallet(key, '0.00', netName, netPass);
         toast.warning('Account needs funding');
+        return { success: false, balance: '0.00', isDegraded: false };
       } else {
-        // Wallet identity is still usable even if Horizon balance lookup is down.
         setWallet(key, '—', netName, netPass);
         toast.warning('Wallet connected; balance unavailable', {
           description: describeStellarNetworkError(error),
         });
+        return { success: false, balance: '—', isDegraded };
       }
     }
   }, [setWallet]);
