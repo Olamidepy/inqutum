@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   sendPayment,
   checkWalletConnection,
@@ -17,6 +17,7 @@ import { showFreighterInstallPrompt, showFreighterWrongNetworkPrompt } from '@/c
 import { describeVerifyError, normalizePayerDetails } from '@/lib/payment-page-state';
 import { useWalletStore } from '@/lib/store';
 import { walletGate } from '@/lib/freighter-availability';
+import { shouldInvalidateUnsignedPayment } from '@/lib/wallet-account-switch';
 
 interface PaymentButtonProps {
   destination: string;
@@ -52,13 +53,43 @@ export default function PaymentButton({
   onError,
 }: PaymentButtonProps) {
   const [loading, setLoading] = useState(false);
-  const { publicKey, connected, network, freighterAvailable } = useWalletStore();
+  const {
+    publicKey,
+    connected,
+    network,
+    freighterAvailable,
+    accountSwitchEpoch,
+    pendingAccountSwitch,
+  } =
+    useWalletStore();
+  const paymentEpochRef = useRef(accountSwitchEpoch);
+  const paymentAccountRef = useRef(publicKey);
+
+  useEffect(() => {
+    if (
+      loading &&
+      (accountSwitchEpoch !== paymentEpochRef.current ||
+        shouldInvalidateUnsignedPayment(paymentAccountRef.current, publicKey, loading))
+    ) {
+      setLoading(false);
+      // Freighter may still have its signing dialog open. Keep the attempt's
+      // original epoch so its eventual pre-broadcast check rejects the stale
+      // transaction even if the user confirms the newly active account first.
+      return;
+    }
+    if (!loading) paymentEpochRef.current = accountSwitchEpoch;
+  }, [accountSwitchEpoch, loading, publicKey]);
   const gate = walletGate(
     { freighterAvailable, connected, publicKey, network },
     EXPECTED_WALLET_NETWORK
   );
 
   const handlePayment = async () => {
+    if (pendingAccountSwitch) {
+      toast.warning('Confirm the active Freighter account before paying');
+      return;
+    }
+
     if (!gate.ready) {
       showFreighterInstallPrompt(gate);
       onError?.(gate.message);
@@ -85,6 +116,9 @@ export default function PaymentButton({
       return;
     }
 
+    paymentEpochRef.current = accountSwitchEpoch;
+    paymentAccountRef.current = publicKey;
+    const attemptEpoch = accountSwitchEpoch;
     setLoading(true);
     onStart?.();
 
@@ -114,7 +148,23 @@ export default function PaymentButton({
       }
 
       toast.loading('Confirm in wallet...', { id: PAY_TOAST_ID });
-      const txHash = await sendPayment(destination, amount, memo, assetCode, assetIssuer);
+      if (useWalletStore.getState().accountSwitchEpoch !== paymentEpochRef.current) {
+        throw new Error('Freighter account changed during payment');
+      }
+      const txHash = await sendPayment(
+        destination,
+        amount,
+        memo,
+        assetCode,
+        assetIssuer,
+        (sourceAccount) => {
+          const current = useWalletStore.getState();
+          return (
+            current.publicKey === sourceAccount &&
+            current.accountSwitchEpoch === attemptEpoch
+          );
+        }
+      );
 
       if (invoiceId) {
         toast.loading('Verifying payment...', { id: PAY_TOAST_ID });

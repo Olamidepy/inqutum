@@ -20,7 +20,11 @@ import { healthHandler, readinessHandler } from './health';
 import { createAuthRouter } from './routes/auth.routes';
 import { createReconciliationRouter } from './routes/reconciliation.routes';
 import { createEmailRouter } from './routes/email.routes';
+import { createCutoverExportRouter } from './routes/cutover.routes';
 import { authenticate, requirePermission } from './middleware/access-control';
+import { exportMemorySnapshot } from './services/cutover.service';
+import memoryStorage from './storage/memory-storage';
+import { mkdirSync, writeFileSync } from 'fs';
 
 dotenv.config();
 assertSafeEnvironment();
@@ -72,6 +76,7 @@ app.use('/api', createEmailRouter({ storage: memoryInvoiceStorage }));
 // Bulk import (issue #53). Dry run by default; opt in with dryRun: false.
 app.use('/api', createImportRouter({ storage: memoryInvoiceStorage }));
 app.use('/api', createPaymentMonitorRouter(paymentMonitorService));
+app.use('/api', createCutoverExportRouter());
 
 // Mock Stellar endpoint (MVP only)
 app.get('/api/stellar/account', authenticate(), requirePermission('stellar:read'), (req: Request, res: Response) => {
@@ -150,12 +155,32 @@ if (/server-mvp(\.[cm]?[jt]s)?$/.test(entryPoint)) {
   startServer();
 }
 
+function dumpMemorySnapshot(reason: string) {
+  try {
+    const snapshot = exportMemorySnapshot(memoryStorage);
+    const dest = path.resolve(
+      process.env.CUTOVER_DUMP_PATH || `data/cutover-snapshot-${Date.now()}.json`
+    );
+    mkdirSync(path.dirname(dest), { recursive: true });
+    writeFileSync(dest, JSON.stringify(snapshot, null, 2));
+    console.log(`[cutover] ${reason}: wrote ${snapshot.count} invoices to ${dest}`);
+  } catch (error) {
+    console.error('[cutover] snapshot dump failed:', error);
+  }
+}
+
+process.on('SIGUSR1', () => {
+  dumpMemorySnapshot('SIGUSR1');
+});
+
 process.on('SIGTERM', () => {
+  dumpMemorySnapshot('SIGTERM');
   paymentMonitorService.stop();
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
+  dumpMemorySnapshot('SIGINT');
   paymentMonitorService.stop();
   process.exit(0);
 });

@@ -10,14 +10,16 @@ import {
 } from '@/lib/stellar';
 import { useWalletStore } from '@/lib/store';
 import { networkMatches, walletGate } from '@/lib/freighter-availability';
+import { didFreighterAccountChange } from '@/lib/wallet-account-switch';
 
 const SESSION_TOAST_ID = 'wallet-session-sync';
 
 export default function WalletSessionSync() {
   const syncSession = useWalletStore((state) => state.syncSession);
+  const confirmAccountSwitch = useWalletStore((state) => state.confirmAccountSwitch);
   const previous = useRef<{ publicKey: string | null; network: string | null }>({
-    publicKey: null,
-    network: null,
+    publicKey: useWalletStore.getState().publicKey,
+    network: useWalletStore.getState().network,
   });
 
   useEffect(() => {
@@ -27,9 +29,11 @@ export default function WalletSessionSync() {
       const session = await readFreighterSession();
       if (!active) return;
 
+      const previousKey = previous.current.publicKey;
       const changed =
-        previous.current.publicKey !== session.publicKey ||
+        previousKey !== session.publicKey ||
         previous.current.network !== session.network;
+      const accountChanged = didFreighterAccountChange(previousKey, session.publicKey);
 
       syncSession(session);
       previous.current = {
@@ -62,22 +66,29 @@ export default function WalletSessionSync() {
       }
 
       if (announce && changed) {
-        toast.info('Wallet session updated', { id: SESSION_TOAST_ID });
+        toast[accountChanged ? 'warning' : 'info'](
+          accountChanged ? 'Freighter account changed' : 'Wallet session updated',
+          {
+            id: SESSION_TOAST_ID,
+            description: accountChanged
+              ? 'In-progress payments were cancelled. Confirm which account you intend to use.'
+              : undefined,
+            action: accountChanged
+              ? { label: 'Continue', onClick: confirmAccountSwitch }
+              : undefined,
+            duration: accountChanged ? Infinity : undefined,
+            closeButton: !accountChanged,
+          }
+        );
       }
     };
 
     void sync(false);
     const stopWatching = stopFreighterWalletWatcher((session) => {
       if (!active) return;
-      const changed =
-        previous.current.publicKey !== session.publicKey ||
-        previous.current.network !== session.network;
-      syncSession(session);
-      previous.current = {
-        publicKey: session.publicKey,
-        network: session.network,
-      };
-      if (changed) void sync(true);
+      // Let the same read/compare path handle extension events and fallback
+      // polling. Updating `previous` here first would hide the account switch.
+      void sync(true);
     });
     const fallbackPoll = window.setInterval(() => void sync(true), 3000);
 
@@ -86,7 +97,7 @@ export default function WalletSessionSync() {
       window.clearInterval(fallbackPoll);
       stopWatching();
     };
-  }, [syncSession]);
+  }, [confirmAccountSwitch, syncSession]);
 
   return null;
 }

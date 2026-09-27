@@ -81,6 +81,15 @@ export class MemoryRateLimiterStore {
 
 export const defaultLimiterStore = new MemoryRateLimiterStore();
 
+export function getWalletKey(req: Request): string | null {
+  if (req.actor?.wallet) return req.actor.wallet;
+  const header = req.headers['x-wallet-public-key'] || req.headers['x-seller-public-key'];
+  if (typeof header === 'string' && header.trim()) return header.trim();
+  const bodyKey = (req.body && (req.body.sellerPublicKey || req.body.walletPublicKey)) as unknown;
+  if (typeof bodyKey === 'string' && bodyKey.trim()) return bodyKey.trim();
+  return null;
+}
+
 export function getClientIp(req: Request): string {
   const forwarded = req.headers['x-forwarded-for'];
   if (typeof forwarded === 'string') {
@@ -162,7 +171,18 @@ export function createInvoiceRateLimiters(
     store
   );
 
-  return [shortLimiter, longLimiter];
+  const walletLimiter = createRateLimiter(
+    {
+      windowMs: 60_000,
+      max: 8,
+      keyGenerator: (req) => `create_invoice:wallet:${getWalletKey(req) || getClientIp(req)}`,
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Rate limit exceeded for this wallet. Max 8 invoices per minute per wallet.',
+    },
+    store
+  );
+
+  return [shortLimiter, longLimiter, walletLimiter];
 }
 
 /**
@@ -211,6 +231,25 @@ export function createGetInvoicesRateLimiter(
       keyGenerator: (req) => `list_invoices:${getClientIp(req)}`,
       code: 'RATE_LIMIT_EXCEEDED',
       message: 'Rate limit exceeded for invoice listing. Max 60 requests per minute.',
+    },
+    store
+  );
+}
+
+/**
+ * Status / payment-info polling is a read path. Allow a client page to poll
+ * every few seconds without 429s, while still bounding a flood.
+ */
+export function createInvoiceReadRateLimiter(
+  store: MemoryRateLimiterStore = defaultLimiterStore
+): RequestHandler {
+  return createRateLimiter(
+    {
+      windowMs: 60_000,
+      max: 120,
+      keyGenerator: (req) => `read_invoice:${getClientIp(req)}`,
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Rate limit exceeded for invoice reads. Max 120 requests per minute.',
     },
     store
   );

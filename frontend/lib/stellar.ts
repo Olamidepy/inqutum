@@ -376,7 +376,8 @@ export const sendPayment = async (
   amount: string,
   memo: string,
   assetCode: string = 'XLM',
-  assetIssuer?: string
+  assetIssuer?: string,
+  isSessionCurrent?: (sourceAccount: string) => boolean
 ): Promise<string> => {
   try {
     const session = await assertFreighterReady();
@@ -439,6 +440,13 @@ export const sendPayment = async (
       signedTxXdr,
       NETWORK_PASSPHRASE
     );
+
+    // Do not broadcast a transaction if Freighter changed accounts while its
+    // signing prompt was open. The source account is fixed in the signed XDR,
+    // but the user must confirm the new wallet session before any payment.
+    if (isSessionCurrent && !isSessionCurrent(userPublicKey)) {
+      throw new Error('Freighter account changed during payment');
+    }
 
     // Submit to network
     const result = await server.submitTransaction(signedTx as any);

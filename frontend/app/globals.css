@@ -231,19 +231,40 @@ body {
 }
 
 @media print {
+  * {
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  html,
   body {
-    print-color-adjust: exact;
-    -webkit-print-color-adjust: exact;
+    background: #ffffff !important;
+    color: #111827 !important;
   }
 
-  .print\:hidden {
-    display: none !important;
-  }
-
+  .print\:hidden,
+  .no-print,
   header,
   footer,
-  nav {
+  nav,
+  .skip-link,
+  [data-sonner-toaster] {
     display: none !important;
+  }
+
+  .card,
+  .proof-container,
+  .pay-amount-panel {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    box-shadow: none !important;
+    border: 1px solid #d1d5db !important;
+    background: #ffffff !important;
+  }
+
+  a[href]::after {
+    content: none !important;
   }
 }
 /* Pay-page components intentionally share these small surface primitives. */

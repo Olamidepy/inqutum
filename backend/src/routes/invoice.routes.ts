@@ -9,6 +9,7 @@ import {
   createInvoiceRateLimiters,
   createVerifyRateLimiters,
   createGetInvoicesRateLimiter,
+  createInvoiceReadRateLimiter,
   createCancelInvoiceRateLimiter,
   verifyConcurrencyLock,
 } from '../middleware/rate-limit';
@@ -112,12 +113,22 @@ export function createInvoiceRouter(options: InvoiceRouterOptions): Router {
     handlers.getInvoices
   );
 
-  router.get('/invoices/:id', requirePermission('invoice:read'), handlers.getInvoice);
+  const readMiddlewares: RequestHandler[] = [];
+  if (enableRateLimiting) {
+    readMiddlewares.push(createInvoiceReadRateLimiter());
+  }
+  router.get(
+    '/invoices/:id',
+    requirePermission('invoice:read'),
+    ...readMiddlewares,
+    handlers.getInvoice
+  );
 
-  // GET /invoices/:id/payment-info - Payment info (no rate limit, needed for checkout)
+  // GET /invoices/:id/payment-info — higher read budget so pay-page polling is not 429'd
   router.get(
     '/invoices/:id/payment-info',
     requirePermission('invoice:read'),
+    ...readMiddlewares,
     handlers.getPaymentInfo
   );
   router.get('/invoices/:id/audit', requirePermission('invoice:audit'), handlers.getAuditTrail);
