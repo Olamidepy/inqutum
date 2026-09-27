@@ -459,6 +459,55 @@ describe('Cutover Export, Validation, and Transactional Import Engine', () => {
     assert.equal(sellerAStats[0].total_invoices, 1);
   });
 
+  it('preserves payment URL and verified-proof fields across export/import', async () => {
+    const paid = await memory.createInvoice({
+      sellerPublicKey: SELLER_A,
+      amount: 99,
+      assetCode: 'XLM',
+      memo: 'PROOF-SURVIVES',
+    });
+    await memory.markAsPaid(paid.id, VALID_TX_HASH, PAYER);
+    const before = await memory.getInvoiceById(paid.id);
+    assert.ok(before);
+    const originalPaymentUrl = `https://quittance.example/pay/${before.id}`;
+    const originalProof = {
+      invoiceId: before.id,
+      status: before.status,
+      sellerPublicKey: before.sellerPublicKey,
+      amount: before.amount,
+      assetCode: before.assetCode,
+      assetIssuer: before.assetIssuer ?? null,
+      memo: before.memo,
+      payerPublicKey: before.payerPublicKey,
+      paymentTxHash: before.paymentTxHash,
+      paidAt: before.paidAt?.toISOString(),
+    };
+
+    const snapshot = exportMemorySnapshot(memory);
+    await importSnapshotToPostgres(fakeDb, snapshot);
+
+    const pgStorage = new PostgresInvoiceStorage(new InvoiceService(fakeDb));
+    const after = await pgStorage.getInvoiceById(paid.id);
+    assert.ok(after);
+    assert.equal(after.id, paid.id);
+    assert.equal(`https://quittance.example/pay/${after.id}`, originalPaymentUrl);
+    assert.deepEqual(
+      {
+        invoiceId: after.id,
+        status: after.status,
+        sellerPublicKey: after.sellerPublicKey,
+        amount: after.amount,
+        assetCode: after.assetCode,
+        assetIssuer: after.assetIssuer ?? null,
+        memo: after.memo,
+        payerPublicKey: after.payerPublicKey,
+        paymentTxHash: after.paymentTxHash,
+        paidAt: after.paidAt?.toISOString(),
+      },
+      originalProof
+    );
+  });
+
   it('empty-database boot operates cleanly without errors', async () => {
     const pgStorage = new PostgresInvoiceStorage(new InvoiceService(fakeDb));
 

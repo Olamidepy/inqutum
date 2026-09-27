@@ -185,16 +185,29 @@
       width: 100%;
     }
     @media print {
+      * {
+        print-color-adjust: exact !important;
+        -webkit-print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
       body {
         background-color: #ffffff;
         padding: 0;
+        color: #111827;
       }
       .proof-container {
-        border: none;
-        padding: 0;
+        border: 1px solid #d1d5db;
+        padding: 16px;
         max-width: 100%;
+        box-shadow: none;
+        break-inside: avoid;
+        page-break-inside: avoid;
       }
-      .no-print {
+      .header, .row, .footer {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+      .no-print, .print-control {
         display: none !important;
       }
     }

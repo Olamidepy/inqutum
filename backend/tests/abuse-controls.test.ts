@@ -286,6 +286,49 @@ describe('Abuse Controls Suite', () => {
       assert.ok(excessive.headers['retry-after']);
     });
 
+    it('applies a separate per-wallet creation budget across client IPs', async () => {
+      for (let i = 0; i < 8; i++) {
+        const response = await request(
+          port,
+          'POST',
+          '/api/invoices',
+          { sellerPublicKey, amount: 10, assetCode: 'XLM' },
+          { ...walletAuth(sellerPublicKey), 'x-forwarded-for': `198.51.100.${60 + i}` }
+        );
+        assert.equal(response.status, 201, `Wallet request ${i + 1} should succeed`);
+      }
+
+      const excessive = await request(
+        port,
+        'POST',
+        '/api/invoices',
+        { sellerPublicKey, amount: 10, assetCode: 'XLM' },
+        { ...walletAuth(sellerPublicKey), 'x-forwarded-for': '198.51.100.70' }
+      );
+      assert.equal(excessive.status, 429);
+      assert.match(excessive.body.error, /8 invoices per minute per wallet/);
+    });
+
+    it('allows rapid payment-info polling within the documented read budget', async () => {
+      const invoice = await invoiceStorage.createInvoice({
+        sellerPublicKey,
+        amount: 10,
+        assetCode: 'XLM',
+      });
+      const pollingIp = '198.51.100.42';
+
+      for (let i = 0; i < 60; i++) {
+        const response = await request(
+          port,
+          'GET',
+          `/api/invoices/${invoice.id}/payment-info`,
+          undefined,
+          { 'x-forwarded-for': pollingIp }
+        );
+        assert.equal(response.status, 200, `Poll ${i + 1} should remain within the 120/min read budget`);
+      }
+    });
+
     it('rejects creation with 503 and Retry-After when invoice ceiling is reached', async () => {
       const smallCeilingApp = express();
       smallCeilingApp.use(express.json());

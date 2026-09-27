@@ -142,6 +142,40 @@ The cutover engine (`backend/src/services/cutover.service.ts` and CLI `backend/s
 5. **Dry-Run Support**: Validates and executes full transaction against the target database, asserting zero collisions, and executes `ROLLBACK` to guarantee zero state modification.
 6. **Parity Verification**: Compares source and target stores across ID, memo, seller key, amount, asset code, issuer, status, and payment hash.
 
+### Live MVP snapshot procedure
+
+The running MVP process owns the live in-memory map, so run the export against
+that process before stopping or replacing it:
+
+1. Set `CUTOVER_DRAIN_MODE=true` on the MVP instance and confirm invoice
+   creation, cancellation, and payment simulation return `503`. Existing pay
+   links and read-only proof views remain available.
+2. Set a high-entropy `CUTOVER_EXPORT_TOKEN` in the instance's secret store.
+   Do not put the value in a URL or shell history.
+3. From a trusted operator shell, download the snapshot over HTTPS using the
+   token header. Set `MVP_API_URL` to the API origin (without a trailing
+   `/api` path):
+
+   ```bash
+   curl --fail --silent --show-error \
+     -H "X-Cutover-Token: $CUTOVER_EXPORT_TOKEN" \
+     "$MVP_API_URL/api/admin/cutover-export" \
+     --output cutover-snapshot.json
+   ```
+
+   The endpoint is disabled when the token is unset and rejects missing or
+   incorrect tokens. Query-string credentials are not accepted.
+4. Validate the snapshot locally, then use the dry-run import before the real
+   import. Keep the snapshot and its checksum until the rollback window closes.
+5. Import and verify against Postgres, then route traffic. Keep the old MVP
+   process drained and available until the compatibility checks pass.
+
+For emergency capture, `SIGUSR1` writes a JSON snapshot to
+`CUTOVER_DUMP_PATH` (default: `data/cutover-snapshot-<timestamp>.json`). Normal
+`SIGTERM` and `SIGINT` shutdowns also write one synchronously before stopping
+the payment monitor. Prefer the authenticated endpoint for planned cutovers:
+it leaves the serving process alive and returns the snapshot directly.
+
 ### CLI Usage (`npm run cutover`)
 
 ```bash

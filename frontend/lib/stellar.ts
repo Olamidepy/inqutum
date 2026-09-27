@@ -99,6 +99,7 @@ const readResultString = (value: any, keys: string[]): string | null => {
 export interface FreighterNetwork {
   network: string | null;
   networkPassphrase: string | null;
+  networkUrl?: string;
 }
 
 export interface FreighterSession {
@@ -150,25 +151,6 @@ export const getUserPublicKey = async (): Promise<string | null> => {
   }
 };
 
-export const getFreighterNetwork = async (): Promise<FreighterNetwork> => {
-  const getNetwork = (FreighterApi as any).getNetwork;
-  if (typeof getNetwork !== 'function') {
-    return { network: null, networkPassphrase: null };
-  }
-
-  try {
-    const result = await getNetwork();
-    if (result?.error) return { network: null, networkPassphrase: null };
-    return {
-      network: readResultString(result?.network ?? result, ['network']),
-      networkPassphrase: readResultString(result?.networkPassphrase, ['networkPassphrase']),
-    };
-  } catch (error) {
-    console.error('Error getting Freighter network:', error);
-    return { network: null, networkPassphrase: null };
-  }
-};
-
 export const readFreighterSession = async (): Promise<FreighterSession> => {
   const freighterAvailable = await checkWalletConnection();
   if (!freighterAvailable) {
@@ -191,8 +173,8 @@ export const readFreighterSession = async (): Promise<FreighterSession> => {
     freighterAvailable: true,
     connected: allowed && Boolean(publicKey),
     publicKey,
-    network: network.network,
-    networkPassphrase: network.networkPassphrase,
+    network: network?.network ?? null,
+    networkPassphrase: network?.networkPassphrase ?? null,
   };
 };
 
@@ -230,11 +212,7 @@ export const assertFreighterReady = async (): Promise<FreighterSession> => {
 /**
  * Query current network and passphrase from Freighter
  */
-export const getFreighterNetwork = async (): Promise<{
-  network: string;
-  networkPassphrase: string;
-  networkUrl?: string;
-} | null> => {
+export const getFreighterNetwork = async (): Promise<FreighterNetwork | null> => {
   try {
     const connected = await checkWalletConnection();
     if (!connected) return null;
@@ -317,9 +295,13 @@ export const watchFreighterNetwork = (
     try {
       const details = await getFreighterNetwork();
       if (!active) return;
-      if (details) {
+      if (details?.network && details.networkPassphrase) {
         const wrong = isWrongNetwork(details.networkPassphrase || details.network);
-        callback({ ...details, isWrongNetwork: wrong });
+        callback({
+          network: details.network,
+          networkPassphrase: details.networkPassphrase,
+          isWrongNetwork: wrong,
+        });
       } else {
         callback(null);
       }
@@ -376,7 +358,8 @@ export const sendPayment = async (
   amount: string,
   memo: string,
   assetCode: string = 'XLM',
-  assetIssuer?: string
+  assetIssuer?: string,
+  isSessionCurrent?: (sourceAccount: string) => boolean
 ): Promise<string> => {
   try {
     const session = await assertFreighterReady();
@@ -439,6 +422,13 @@ export const sendPayment = async (
       signedTxXdr,
       NETWORK_PASSPHRASE
     );
+
+    // Do not broadcast a transaction if Freighter changed accounts while its
+    // signing prompt was open. The source account is fixed in the signed XDR,
+    // but the user must confirm the new wallet session before any payment.
+    if (isSessionCurrent && !isSessionCurrent(userPublicKey)) {
+      throw new Error('Freighter account changed during payment');
+    }
 
     // Submit to network
     const result = await server.submitTransaction(signedTx as any);

@@ -171,6 +171,9 @@ test('renders the golden HTML document for the fixture proof', () => {
   const proof = build(paidInvoice);
   const renderedHtml = renderQuittanceProofHtml(proof);
   assert.equal(renderedHtml, goldenProofHtml);
+  assert.match(renderedHtml, /print-color-adjust:\s*exact\s*!important/);
+  assert.match(renderedHtml, /-webkit-print-color-adjust:\s*exact\s*!important/);
+  assert.match(renderedHtml, /break-inside:\s*avoid/);
 });
 
 test('produces byte-for-byte deterministic PDF matching the golden PDF fixture', () => {

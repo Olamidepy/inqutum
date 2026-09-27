@@ -63,28 +63,42 @@ All 8 ranked scenarios from `ABUSE-CONTROLS.md` have been addressed through a co
 
 | Endpoint | Limit | Window | Response |
 |----------|-------|--------|----------|
+| `POST /invoices` | 5 per IP | 1 min | 429 + Retry-After |
 | `POST /invoices` | 10 per IP | 10 min | 429 + Retry-After |
+| `POST /invoices` | 8 per wallet key | 1 min | 429 + Retry-After |
 | `POST /invoices/:id/verify` | 30 per IP | 1 min | 429 + Retry-After |
 | `POST /invoices/:id/verify` | 10 per invoice | 1 min | 429 + Retry-After (secondary) |
 | `GET /invoices` | 60 per IP | 1 min | 429 + Retry-After |
+| `GET /invoices/:id` and `/payment-info` | 120 per IP | 1 min | 429 + Retry-After |
 | `POST /invoices/:id/cancel` | 10 per IP | 1 min | 401 (auth) or 429 (rate) |
-| `GET /invoices/stats` | 60 per IP | 1 min | 429 + Retry-After |
+
+Invoice creation applies all three limits; the first exhausted bucket rejects
+the request. The wallet key is the authenticated wallet when available,
+otherwise the seller public key supplied for creation (with IP fallback when
+no key is present). IP buckets remain the anonymous floor because request
+bodies cannot prove wallet ownership. Payment-status reads share one per-IP
+bucket so ordinary pay-page polling (up to 120 requests/minute) remains within
+budget. Verification also has a per-invoice concurrency lock, and
+successful `(invoice, txHash)` verification results are cached to avoid
+repeating the same Horizon lookup.
 
 ### Infrastructure
 
-**Storage**: Redis (primary) with in-memory fallback
-- Limits survive process restarts when Redis is configured
-- Automatic fallback when Redis unavailable (fail-open design)
-- Memory store auto-cleans entries older than 1 hour
+**Storage**: In-process `MemoryRateLimiterStore`
+- Counters are local to one backend process and reset on restart.
+- Multi-instance deployments need a shared store or edge gateway policy for a
+  single aggregate budget across replicas.
+- Expired buckets are removed by the store's periodic cleanup.
 
-**Algorithm**: Token bucket with refill
-- Each limit is a (capacity, refill_amount, window) tuple
-- Tokens refill at the end of each window
-- Atomic operations via Lua scripts in Redis
+**Algorithm**: Fixed window counter
+- The first request starts a window for that key.
+- Requests over the configured count receive `429` and `Retry-After`.
 
 **Client IP detection**: 
-- Respects `X-Forwarded-For` header (Vercel, Render)
+- Uses the first `X-Forwarded-For` address when present
 - Falls back to `socket.remoteAddress`
+- The deployment proxy must overwrite or sanitize inbound forwarding headers;
+  clients must not be allowed to choose their own rate-limit IP.
 
 **Files**:
 - `backend/src/middleware/rate-limit.ts` - Core rate limiting logic
